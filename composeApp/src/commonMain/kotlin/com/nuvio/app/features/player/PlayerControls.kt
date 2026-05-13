@@ -26,6 +26,7 @@ import androidx.compose.material.icons.rounded.Forward10
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockOpen
 import androidx.compose.material.icons.rounded.Replay10
+import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VideoLibrary
@@ -78,6 +79,7 @@ internal fun PlayerControlsShell(
     onSpeedClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
+    onCastClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
     onSubmitIntroClick: (() -> Unit)? = null,
@@ -167,6 +169,7 @@ internal fun PlayerControlsShell(
                 onSpeedClick = onSpeedClick,
                 onSubtitleClick = onSubtitleClick,
                 onAudioClick = onAudioClick,
+                onCastClick = onCastClick,
                 onSourcesClick = onSourcesClick,
                 onEpisodesClick = onEpisodesClick,
                 modifier = Modifier
@@ -432,6 +435,7 @@ private fun ProgressControls(
     onSpeedClick: () -> Unit,
     onSubtitleClick: () -> Unit,
     onAudioClick: () -> Unit,
+    onCastClick: (() -> Unit)? = null,
     onSourcesClick: (() -> Unit)? = null,
     onEpisodesClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -501,6 +505,13 @@ private fun ProgressControls(
                         painter = audioPainter,
                         onClick = onAudioClick,
                     )
+                    if (onCastClick != null) {
+                        PlayerActionPillButton(
+                            label = stringResource(Res.string.compose_player_cast),
+                            icon = Icons.Rounded.Cast,
+                            onClick = onCastClick,
+                        )
+                    }
                     if (onSourcesClick != null) {
                         PlayerActionPillButton(
                             label = stringResource(Res.string.compose_player_sources),
