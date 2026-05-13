@@ -1122,7 +1122,6 @@ fun PlayerScreen(
             )
             if (opened) {
                 shouldPlay = false
-                playerController?.pause()
                 controlsVisible = true
             }
         }
