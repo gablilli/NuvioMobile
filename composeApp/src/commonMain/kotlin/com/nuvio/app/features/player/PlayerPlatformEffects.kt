@@ -32,3 +32,5 @@ expect fun rememberPlayerGestureController(): PlayerGestureController?
 
 @Composable
 expect fun rememberCastLauncher(): (() -> Unit)?
+
+expect fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest)

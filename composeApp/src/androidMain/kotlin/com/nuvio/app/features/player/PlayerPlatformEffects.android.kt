@@ -20,7 +20,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.mediarouter.app.MediaRouteChooserDialog
 import androidx.mediarouter.media.MediaRouteSelector
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaMetadata
 import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.SessionManagerListener
 import kotlin.math.roundToInt
 
 @Composable
@@ -191,13 +196,99 @@ actual fun rememberCastLauncher(): (() -> Unit)? {
     val activity = LocalContext.current.findActivity() as? AppCompatActivity ?: return null
     return remember(activity) {
         {
-            runCatching { CastContext.getSharedInstance(activity) }
-                .getOrNull()
-                ?.let { castContext ->
-                    MediaRouteChooserDialog(activity).apply {
-                        routeSelector = castContext.mergedSelector ?: MediaRouteSelector.EMPTY
-                    }.show()
-                }
+            AndroidCastPlaybackCoordinator.openChooser(activity)
         }
+    }
+}
+
+actual fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest) {
+    AndroidCastPlaybackCoordinator.updatePendingRequest(request)
+}
+
+private object AndroidCastPlaybackCoordinator {
+    private var pendingRequest: ExternalPlayerPlaybackRequest? = null
+    private var sessionListenerRegistered = false
+
+    private val sessionListener = object : SessionManagerListener<CastSession> {
+        override fun onSessionStarting(session: CastSession) = Unit
+
+        override fun onSessionStarted(session: CastSession, sessionId: String) {
+            loadPendingRequest(session)
+        }
+
+        override fun onSessionStartFailed(session: CastSession, error: Int) = Unit
+
+        override fun onSessionEnding(session: CastSession) = Unit
+
+        override fun onSessionEnded(session: CastSession, error: Int) = Unit
+
+        override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
+
+        override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            loadPendingRequest(session)
+        }
+
+        override fun onSessionResumeFailed(session: CastSession, error: Int) = Unit
+
+        override fun onSessionSuspended(session: CastSession, reason: Int) = Unit
+    }
+
+    fun updatePendingRequest(request: ExternalPlayerPlaybackRequest) {
+        pendingRequest = request
+    }
+
+    fun openChooser(activity: AppCompatActivity) {
+        runCatching { CastContext.getSharedInstance(activity) }
+            .getOrNull()
+            ?.let { castContext ->
+                ensureSessionListener(castContext)
+                castContext.sessionManager.currentCastSession?.let(::loadPendingRequest)
+                MediaRouteChooserDialog(activity).apply {
+                    routeSelector = castContext.mergedSelector ?: MediaRouteSelector.EMPTY
+                }.show()
+            }
+    }
+
+    private fun ensureSessionListener(castContext: CastContext) {
+        if (sessionListenerRegistered) return
+        castContext.sessionManager.addSessionManagerListener(
+            sessionListener,
+            CastSession::class.java,
+        )
+        sessionListenerRegistered = true
+    }
+
+    private fun loadPendingRequest(session: CastSession) {
+        val request = pendingRequest ?: return
+        val remoteMediaClient = session.remoteMediaClient ?: return
+        val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
+        val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
+            putString(MediaMetadata.KEY_TITLE, displayTitle)
+        }
+        val mediaInfo = MediaInfo.Builder(request.sourceUrl)
+            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType(request.sourceUrl.castContentType())
+            .setMetadata(metadata)
+            .build()
+        remoteMediaClient.load(
+            MediaLoadRequestData.Builder()
+                .setMediaInfo(mediaInfo)
+                .setAutoplay(true)
+                .build(),
+        )
+        pendingRequest = null
+    }
+}
+
+private fun String.castContentType(): String {
+    val normalized = substringBefore('?').substringBefore('#').lowercase()
+    return when {
+        normalized.endsWith(".m3u8") -> "application/x-mpegURL"
+        normalized.endsWith(".mpd") -> "application/dash+xml"
+        normalized.endsWith(".mkv") -> "video/x-matroska"
+        normalized.endsWith(".webm") -> "video/webm"
+        normalized.endsWith(".avi") -> "video/x-msvideo"
+        normalized.endsWith(".mov") -> "video/quicktime"
+        else -> "video/*"
     }
 }

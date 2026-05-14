@@ -76,6 +76,8 @@ actual fun rememberCastLauncher(): (() -> Unit)? = remember {
     }
 }
 
+actual fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest) = Unit
+
 private class IOSPlayerGestureController : PlayerGestureController {
     private val volumeView = MPVolumeView().apply {
         hidden = true
