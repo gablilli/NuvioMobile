@@ -19,6 +19,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.mediarouter.app.MediaRouteChooserDialog
+import androidx.mediarouter.media.MediaRouteSelector
 import com.google.android.gms.cast.framework.CastContext
 import kotlin.math.roundToInt
 
@@ -194,7 +195,7 @@ actual fun rememberCastLauncher(): (() -> Unit)? {
                 .getOrNull()
                 ?.let { castContext ->
                     MediaRouteChooserDialog(activity).apply {
-                        routeSelector = castContext.mergedSelector
+                        routeSelector = castContext.mergedSelector ?: MediaRouteSelector.EMPTY
                     }.show()
                 }
         }

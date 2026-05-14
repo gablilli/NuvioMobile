@@ -141,6 +141,7 @@ fun PlayerScreen(
     providerAddonId: String? = null,
     initialPositionMs: Long = 0L,
     initialProgressFraction: Float? = null,
+    onCastRequest: ((ExternalPlayerPlaybackRequest) -> Boolean)? = null,
 ) {
     LockPlayerToLandscape()
     val castLauncher = rememberCastLauncher()
@@ -1110,6 +1111,22 @@ fun PlayerScreen(
             controlsVisible = false
         }
 
+        fun castActiveStream() {
+            val cast = onCastRequest ?: return
+            val opened = cast(
+                ExternalPlayerPlaybackRequest(
+                    sourceUrl = activeSourceUrl,
+                    title = title,
+                    streamTitle = activeStreamTitle,
+                    sourceHeaders = activeSourceHeaders,
+                ),
+            )
+            if (opened) {
+                shouldPlay = false
+                controlsVisible = true
+            }
+        }
+
         fun fetchAddonSubtitlesForActiveItem() {
             val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
             val videoId = activeVideoId?.takeIf { it.isNotBlank() } ?: return
@@ -1658,7 +1675,9 @@ fun PlayerScreen(
                         refreshTracks()
                         showAudioModal = true
                     },
-                    onCastClick = castLauncher,
+                    onCastClick = castLauncher ?: {
+                        castActiveStream()
+                    },
                     onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
                     onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
                     onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
