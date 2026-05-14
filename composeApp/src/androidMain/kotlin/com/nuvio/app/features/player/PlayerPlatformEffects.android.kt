@@ -190,15 +190,13 @@ actual fun rememberCastLauncher(): (() -> Unit)? {
     val activity = LocalContext.current.findActivity() as? AppCompatActivity ?: return null
     return remember(activity) {
         {
-            val castContext = runCatching {
-                CastContext.getSharedInstance(activity)
-            }.getOrNull()
-            val routeSelector = castContext?.mergedSelector
-            if (routeSelector != null) {
-                val dialog = MediaRouteChooserDialog(activity)
-                dialog.routeSelector = routeSelector
-                dialog.show()
-            }
+            runCatching { CastContext.getSharedInstance(activity) }
+                .getOrNull()
+                ?.let { castContext ->
+                    MediaRouteChooserDialog(activity).apply {
+                        routeSelector = castContext.mergedSelector
+                    }.show()
+                }
         }
     }
 }

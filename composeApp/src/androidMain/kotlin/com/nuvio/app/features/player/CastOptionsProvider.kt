@@ -9,7 +9,7 @@ import com.google.android.gms.cast.framework.media.CastMediaOptions
 class CastOptionsProvider : OptionsProvider {
     override fun getCastOptions(context: Context): CastOptions =
         CastOptions.Builder()
-            .setReceiverApplicationId(DefaultMediaReceiverId)
+            .setReceiverApplicationId(DEFAULT_MEDIA_RECEIVER_ID)
             .setCastMediaOptions(
                 CastMediaOptions.Builder().build(),
             )
@@ -18,4 +18,4 @@ class CastOptionsProvider : OptionsProvider {
     override fun getAdditionalSessionProviders(context: Context): List<SessionProvider>? = null
 }
 
-private const val DefaultMediaReceiverId = "CC1AD845"
+private const val DEFAULT_MEDIA_RECEIVER_ID = "CC1AD845"
