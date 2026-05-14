@@ -64,8 +64,17 @@ actual fun rememberPlayerGestureController(): PlayerGestureController? {
     return controller
 }
 
+private const val castChooserRequestNotification = "NuvioCastChooserRequest"
+
 @Composable
-actual fun rememberCastLauncher(): (() -> Unit)? = null
+actual fun rememberCastLauncher(): (() -> Unit)? = remember {
+    {
+        NSNotificationCenter.defaultCenter.postNotificationName(
+            castChooserRequestNotification,
+            null,
+        )
+    }
+}
 
 private class IOSPlayerGestureController : PlayerGestureController {
     private val volumeView = MPVolumeView().apply {

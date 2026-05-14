@@ -1,0 +1,6 @@
+platform :ios, '16.1'
+use_frameworks!
+
+target 'iosApp' do
+  pod 'google-cast-sdk', '~> 4.8'
+end
