@@ -273,11 +273,14 @@ private object AndroidCastPlaybackCoordinator {
 
     private fun unregisterSessionListenerIfIdle() {
         val castContextToUnregister = synchronized(stateLock) {
-            if (pendingRequest != null || !sessionListenerRegistered) return
-            val castContext = listenerCastContext
-            listenerCastContext = null
-            sessionListenerRegistered = false
-            castContext
+            if (pendingRequest != null || !sessionListenerRegistered) {
+                null
+            } else {
+                val castContext = listenerCastContext
+                listenerCastContext = null
+                sessionListenerRegistered = false
+                castContext
+            }
         }
         castContextToUnregister?.sessionManager?.removeSessionManagerListener(
             sessionListener,
@@ -311,7 +314,7 @@ private object AndroidCastPlaybackCoordinator {
 }
 
 private fun ExternalPlayerPlaybackRequest.castContentType(): String {
-    val headerType = sourceHeaders.entries.firstOrNull { (key, _) ->
+    val headerType = sourceHeaders.entries.find { (key, _) ->
         key.equals("Content-Type", ignoreCase = true)
     }?.value?.substringBefore(';')?.trim()
     if (!headerType.isNullOrBlank()) return headerType
