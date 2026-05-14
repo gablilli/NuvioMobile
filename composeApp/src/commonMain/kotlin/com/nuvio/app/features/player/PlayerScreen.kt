@@ -1111,7 +1111,7 @@ fun PlayerScreen(
             controlsVisible = false
         }
 
-        fun castActiveStream() {
+        fun requestCastPlayback() {
             val handleCastRequest = onCastRequest ?: return
             val castStarted = handleCastRequest(
                 ExternalPlayerPlaybackRequest(
@@ -1126,6 +1126,7 @@ fun PlayerScreen(
                 controlsVisible = true
             }
         }
+        val castClickHandler = castLauncher ?: ::requestCastPlayback
 
         fun fetchAddonSubtitlesForActiveItem() {
             val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
@@ -1675,7 +1676,7 @@ fun PlayerScreen(
                         refreshTracks()
                         showAudioModal = true
                     },
-                    onCastClick = castLauncher ?: ::castActiveStream,
+                    onCastClick = castClickHandler,
                     onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
                     onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
                     onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
