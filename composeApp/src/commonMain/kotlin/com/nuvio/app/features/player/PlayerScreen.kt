@@ -1112,8 +1112,8 @@ fun PlayerScreen(
         }
 
         fun handleCastRequest() {
-            val handleCastRequest = onCastRequest ?: return
-            val castStarted = handleCastRequest(
+            val castRequestHandler = onCastRequest ?: return
+            val castStarted = castRequestHandler(
                 ExternalPlayerPlaybackRequest(
                     sourceUrl = activeSourceUrl,
                     title = title,
