@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -17,6 +18,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.mediarouter.app.MediaRouteChooserDialog
+import com.google.android.gms.cast.framework.CastContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -180,4 +183,22 @@ private class AndroidPlayerGestureController(
         }.getOrDefault(127)
             .coerceIn(1, 255)
             .toFloat() / 255f
+}
+
+@Composable
+actual fun rememberCastLauncher(): (() -> Unit)? {
+    val activity = LocalContext.current.findActivity() as? AppCompatActivity ?: return null
+    return remember(activity) {
+        {
+            val castContext = runCatching {
+                CastContext.getSharedInstance(activity)
+            }.getOrNull()
+            val routeSelector = castContext?.mergedSelector
+            if (routeSelector != null) {
+                val dialog = MediaRouteChooserDialog(activity)
+                dialog.routeSelector = routeSelector
+                dialog.show()
+            }
+        }
+    }
 }

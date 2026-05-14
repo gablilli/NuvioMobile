@@ -770,10 +770,10 @@ private fun MainAppContent(
             }
         }
 
-        fun openExternalPlayback(request: ExternalPlayerPlaybackRequest): Boolean {
+        fun openExternalPlayback(launch: PlayerLaunch): Boolean {
             return when (
                 ExternalPlayerPlatform.open(
-                    request = request,
+                    request = launch.toExternalPlayerPlaybackRequest(),
                     playerId = playerSettingsUiState.externalPlayerId,
                 )
             ) {
@@ -792,9 +792,6 @@ private fun MainAppContent(
                 }
             }
         }
-
-        fun openExternalPlayback(launch: PlayerLaunch): Boolean =
-            openExternalPlayback(launch.toExternalPlayerPlaybackRequest())
 
         fun launchPlaybackWithDownloadPreference(
             type: String,
@@ -1700,9 +1697,6 @@ private fun MainAppContent(
                         parentMetaType = launch.parentMetaType,
                         initialPositionMs = launch.initialPositionMs,
                         initialProgressFraction = launch.initialProgressFraction,
-                        onCastRequest = { request ->
-                            openExternalPlayback(request)
-                        },
                         onBack = {
                             ResumePromptRepository.markPlayerExitedNormally()
                             PlayerLaunchStore.remove(route.launchId)

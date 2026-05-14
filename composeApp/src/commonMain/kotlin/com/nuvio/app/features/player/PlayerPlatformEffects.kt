@@ -29,3 +29,6 @@ expect fun ManagePlayerPictureInPicture(
 
 @Composable
 expect fun rememberPlayerGestureController(): PlayerGestureController?
+
+@Composable
+expect fun rememberCastLauncher(): (() -> Unit)?
