@@ -1111,7 +1111,7 @@ fun PlayerScreen(
             controlsVisible = false
         }
 
-        fun requestCastPlayback() {
+        fun handleCastRequest() {
             val handleCastRequest = onCastRequest ?: return
             val castStarted = handleCastRequest(
                 ExternalPlayerPlaybackRequest(
@@ -1126,7 +1126,7 @@ fun PlayerScreen(
                 controlsVisible = true
             }
         }
-        val castClickHandler = castLauncher ?: ::requestCastPlayback
+        val castClickHandler = castLauncher ?: ::handleCastRequest
 
         fun fetchAddonSubtitlesForActiveItem() {
             val type = activeAddonSubtitleType.takeIf { it.isNotBlank() } ?: return
