@@ -206,8 +206,10 @@ actual fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest) {
 }
 
 private object AndroidCastPlaybackCoordinator {
+    private val stateLock = Any()
     private var pendingRequest: ExternalPlayerPlaybackRequest? = null
     private var sessionListenerRegistered = false
+    private var listenerCastContext: CastContext? = null
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) = Unit
@@ -216,11 +218,15 @@ private object AndroidCastPlaybackCoordinator {
             loadPendingRequest(session)
         }
 
-        override fun onSessionStartFailed(session: CastSession, error: Int) = Unit
+        override fun onSessionStartFailed(session: CastSession, error: Int) {
+            unregisterSessionListenerIfIdle()
+        }
 
         override fun onSessionEnding(session: CastSession) = Unit
 
-        override fun onSessionEnded(session: CastSession, error: Int) = Unit
+        override fun onSessionEnded(session: CastSession, error: Int) {
+            unregisterSessionListenerIfIdle()
+        }
 
         override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
 
@@ -228,13 +234,17 @@ private object AndroidCastPlaybackCoordinator {
             loadPendingRequest(session)
         }
 
-        override fun onSessionResumeFailed(session: CastSession, error: Int) = Unit
+        override fun onSessionResumeFailed(session: CastSession, error: Int) {
+            unregisterSessionListenerIfIdle()
+        }
 
         override fun onSessionSuspended(session: CastSession, reason: Int) = Unit
     }
 
     fun updatePendingRequest(request: ExternalPlayerPlaybackRequest) {
-        pendingRequest = request
+        synchronized(stateLock) {
+            pendingRequest = request
+        }
     }
 
     fun openChooser(activity: AppCompatActivity) {
@@ -250,16 +260,33 @@ private object AndroidCastPlaybackCoordinator {
     }
 
     private fun ensureSessionListener(castContext: CastContext) {
-        if (sessionListenerRegistered) return
-        castContext.sessionManager.addSessionManagerListener(
+        synchronized(stateLock) {
+            if (sessionListenerRegistered) return
+            castContext.sessionManager.addSessionManagerListener(
+                sessionListener,
+                CastSession::class.java,
+            )
+            sessionListenerRegistered = true
+            listenerCastContext = castContext
+        }
+    }
+
+    private fun unregisterSessionListenerIfIdle() {
+        val castContextToUnregister = synchronized(stateLock) {
+            if (pendingRequest != null || !sessionListenerRegistered) return
+            val castContext = listenerCastContext
+            listenerCastContext = null
+            sessionListenerRegistered = false
+            castContext
+        }
+        castContextToUnregister?.sessionManager?.removeSessionManagerListener(
             sessionListener,
             CastSession::class.java,
         )
-        sessionListenerRegistered = true
     }
 
     private fun loadPendingRequest(session: CastSession) {
-        val request = pendingRequest ?: return
+        val request = synchronized(stateLock) { pendingRequest } ?: return
         val remoteMediaClient = session.remoteMediaClient ?: return
         val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
@@ -267,7 +294,7 @@ private object AndroidCastPlaybackCoordinator {
         }
         val mediaInfo = MediaInfo.Builder(request.sourceUrl)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
-            .setContentType(request.sourceUrl.castContentType())
+            .setContentType(request.castContentType())
             .setMetadata(metadata)
             .build()
         remoteMediaClient.load(
@@ -276,11 +303,22 @@ private object AndroidCastPlaybackCoordinator {
                 .setAutoplay(true)
                 .build(),
         )
-        pendingRequest = null
+        synchronized(stateLock) {
+            pendingRequest = null
+        }
+        unregisterSessionListenerIfIdle()
     }
 }
 
-private fun String.castContentType(): String {
+private fun ExternalPlayerPlaybackRequest.castContentType(): String {
+    val headerType = sourceHeaders.entries.firstOrNull { (key, _) ->
+        key.equals("Content-Type", ignoreCase = true)
+    }?.value?.substringBefore(';')?.trim()
+    if (!headerType.isNullOrBlank()) return headerType
+    return sourceUrl.castContentTypeFromUrl()
+}
+
+private fun String.castContentTypeFromUrl(): String {
     val normalized = substringBefore('?').substringBefore('#').lowercase()
     return when {
         normalized.endsWith(".m3u8") -> "application/x-mpegURL"
