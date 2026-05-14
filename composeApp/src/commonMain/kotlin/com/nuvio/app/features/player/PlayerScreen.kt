@@ -1675,9 +1675,7 @@ fun PlayerScreen(
                         refreshTracks()
                         showAudioModal = true
                     },
-                    onCastClick = castLauncher ?: {
-                        castActiveStream()
-                    },
+                    onCastClick = castLauncher ?: ::castActiveStream,
                     onSourcesClick = if (activeVideoId != null) { { openSourcesPanel() } } else null,
                     onEpisodesClick = if (isSeries) { { openEpisodesPanel() } } else null,
                     onSubmitIntroClick = if (isSeries && playerSettingsUiState.introSubmitEnabled && playerSettingsUiState.introDbApiKey.isNotBlank()) { { showSubmitIntroModal = true } } else null,
