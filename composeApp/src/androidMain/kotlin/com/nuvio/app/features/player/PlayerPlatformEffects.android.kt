@@ -289,8 +289,20 @@ private object AndroidCastPlaybackCoordinator {
     }
 
     private fun loadPendingRequest(session: CastSession) {
-        val request = synchronized(stateLock) { pendingRequest } ?: return
-        val remoteMediaClient = session.remoteMediaClient ?: return
+        val request = synchronized(stateLock) {
+            pendingRequest?.also {
+                pendingRequest = null
+            }
+        } ?: return
+        val remoteMediaClient = session.remoteMediaClient
+        if (remoteMediaClient == null) {
+            synchronized(stateLock) {
+                if (pendingRequest == null) {
+                    pendingRequest = request
+                }
+            }
+            return
+        }
         val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
             putString(MediaMetadata.KEY_TITLE, displayTitle)
@@ -306,9 +318,6 @@ private object AndroidCastPlaybackCoordinator {
                 .setAutoplay(true)
                 .build(),
         )
-        synchronized(stateLock) {
-            pendingRequest = null
-        }
         unregisterSessionListenerIfIdle()
     }
 }
