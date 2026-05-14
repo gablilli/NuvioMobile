@@ -252,7 +252,6 @@ private object AndroidCastPlaybackCoordinator {
             .getOrNull()
             ?.let { castContext ->
                 ensureSessionListener(castContext)
-                castContext.sessionManager.currentCastSession?.let(::loadPendingRequest)
                 MediaRouteChooserDialog(activity).apply {
                     routeSelector = castContext.mergedSelector ?: MediaRouteSelector.EMPTY
                 }.show()
@@ -289,20 +288,12 @@ private object AndroidCastPlaybackCoordinator {
     }
 
     private fun loadPendingRequest(session: CastSession) {
+        val remoteMediaClient = session.remoteMediaClient ?: return
         val request = synchronized(stateLock) {
             pendingRequest?.also {
                 pendingRequest = null
             }
         } ?: return
-        val remoteMediaClient = session.remoteMediaClient
-        if (remoteMediaClient == null) {
-            synchronized(stateLock) {
-                if (pendingRequest == null) {
-                    pendingRequest = request
-                }
-            }
-            return
-        }
         val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
             putString(MediaMetadata.KEY_TITLE, displayTitle)
@@ -323,9 +314,9 @@ private object AndroidCastPlaybackCoordinator {
 }
 
 private fun ExternalPlayerPlaybackRequest.castContentType(): String {
-    val headerType = sourceHeaders.entries.find { (key, _) ->
-        key.equals("Content-Type", ignoreCase = true)
-    }?.value?.substringBefore(';')?.trim()
+    val headerType = sourceHeaders.entries.firstNotNullOfOrNull { (key, value) ->
+        value.takeIf { key.equals("Content-Type", ignoreCase = true) }
+    }?.substringBefore(';')?.trim()
     if (!headerType.isNullOrBlank()) return headerType
     return sourceUrl.castContentTypeFromUrl()
 }
