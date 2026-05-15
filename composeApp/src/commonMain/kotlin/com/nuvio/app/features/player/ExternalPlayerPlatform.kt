@@ -9,6 +9,7 @@ data class ExternalPlayerPlaybackRequest(
     val sourceUrl: String,
     val title: String,
     val streamTitle: String? = null,
+    val artworkUrl: String? = null,
     val sourceHeaders: Map<String, String> = emptyMap(),
 )
 

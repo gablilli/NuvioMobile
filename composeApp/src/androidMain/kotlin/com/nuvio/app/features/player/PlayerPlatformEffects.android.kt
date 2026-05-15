@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
@@ -12,7 +13,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
@@ -23,8 +26,11 @@ import androidx.mediarouter.media.MediaRouteSelector
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaStatus
+import com.google.android.gms.common.images.WebImage
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
 import com.google.android.gms.cast.framework.SessionManagerListener
 import kotlin.math.roundToInt
 
@@ -205,37 +211,79 @@ actual fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest) {
     AndroidCastPlaybackCoordinator.updatePendingRequest(request)
 }
 
+@Composable
+actual fun rememberCastSessionSnapshot(): CastSessionSnapshot {
+    val snapshot by AndroidCastPlaybackCoordinator.sessionSnapshotState
+    return snapshot
+}
+
+actual fun syncCastPlaybackRequestIfConnected(request: ExternalPlayerPlaybackRequest) {
+    AndroidCastPlaybackCoordinator.syncIfConnected(request)
+}
+
+actual fun toggleCastPlayback() {
+    AndroidCastPlaybackCoordinator.togglePlayback()
+}
+
+actual fun seekCastBy(offsetMs: Long) {
+    AndroidCastPlaybackCoordinator.seekBy(offsetMs)
+}
+
+actual fun seekCastTo(positionMs: Long) {
+    AndroidCastPlaybackCoordinator.seekTo(positionMs)
+}
+
 private object AndroidCastPlaybackCoordinator {
     private val stateLock = Any()
     private var pendingRequest: ExternalPlayerPlaybackRequest? = null
     private var sessionListenerRegistered = false
     private var listenerCastContext: CastContext? = null
+    val sessionSnapshotState = mutableStateOf(CastSessionSnapshot())
+    private var attachedRemoteClient: RemoteMediaClient? = null
+
+    private val remoteClientCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            updateSnapshotFromRemoteClient(attachedRemoteClient)
+        }
+
+        override fun onMetadataUpdated() {
+            updateSnapshotFromRemoteClient(attachedRemoteClient)
+        }
+    }
 
     private val sessionListener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) = Unit
 
         override fun onSessionStarted(session: CastSession, sessionId: String) {
+            attachRemoteClient(session.remoteMediaClient)
             loadPendingRequest(session)
+            updateSnapshotFromRemoteClient(session.remoteMediaClient)
         }
 
         override fun onSessionStartFailed(session: CastSession, error: Int) {
             unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
         }
 
         override fun onSessionEnding(session: CastSession) = Unit
 
         override fun onSessionEnded(session: CastSession, error: Int) {
+            attachRemoteClient(null)
             unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
         }
 
         override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
 
         override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            attachRemoteClient(session.remoteMediaClient)
             loadPendingRequest(session)
+            updateSnapshotFromRemoteClient(session.remoteMediaClient)
         }
 
         override fun onSessionResumeFailed(session: CastSession, error: Int) {
             unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
         }
 
         override fun onSessionSuspended(session: CastSession, reason: Int) = Unit
@@ -245,6 +293,43 @@ private object AndroidCastPlaybackCoordinator {
         synchronized(stateLock) {
             pendingRequest = request
         }
+    }
+
+    fun syncIfConnected(request: ExternalPlayerPlaybackRequest) {
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val currentSession = castContext.sessionManager.currentCastSession ?: return
+        updatePendingRequest(request)
+        loadPendingRequest(currentSession)
+    }
+
+    fun togglePlayback() {
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        val playerState = remoteClient.mediaStatus?.playerState
+        if (playerState == MediaStatus.PLAYER_STATE_PLAYING || playerState == MediaStatus.PLAYER_STATE_BUFFERING) {
+            remoteClient.pause()
+        } else {
+            remoteClient.play()
+        }
+    }
+
+    fun seekBy(offsetMs: Long) {
+        if (offsetMs == 0L) return
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        val currentPosition = remoteClient.approximateStreamPosition.coerceAtLeast(0L)
+        val duration = remoteClient.mediaStatus?.mediaInfo?.streamDuration?.takeIf { it > 0L }
+        val target = (currentPosition + offsetMs).let { unclamped ->
+            duration?.let { unclamped.coerceIn(0L, it) } ?: unclamped.coerceAtLeast(0L)
+        }
+        remoteClient.seek(target)
+    }
+
+    fun seekTo(positionMs: Long) {
+        val target = positionMs.coerceAtLeast(0L)
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        remoteClient.seek(target)
     }
 
     fun openChooser(activity: AppCompatActivity) {
@@ -289,6 +374,7 @@ private object AndroidCastPlaybackCoordinator {
 
     private fun loadPendingRequest(session: CastSession) {
         val remoteMediaClient = session.remoteMediaClient ?: return
+        attachRemoteClient(remoteMediaClient)
         val request = synchronized(stateLock) {
             pendingRequest?.also {
                 pendingRequest = null
@@ -297,6 +383,10 @@ private object AndroidCastPlaybackCoordinator {
         val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
             putString(MediaMetadata.KEY_TITLE, displayTitle)
+            putString(MediaMetadata.KEY_SUBTITLE, request.title)
+            request.artworkUrl
+                ?.takeIf { it.isNotBlank() }
+                ?.let { addImage(WebImage(Uri.parse(it))) }
         }
         val mediaInfo = MediaInfo.Builder(request.sourceUrl)
             .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
@@ -310,6 +400,29 @@ private object AndroidCastPlaybackCoordinator {
                 .build(),
         )
         unregisterSessionListenerIfIdle()
+        updateSnapshotFromRemoteClient(remoteMediaClient)
+    }
+
+    private fun attachRemoteClient(client: RemoteMediaClient?) {
+        val previous = attachedRemoteClient
+        if (previous === client) return
+        previous?.unregisterCallback(remoteClientCallback)
+        attachedRemoteClient = client
+        client?.registerCallback(remoteClientCallback)
+        updateSnapshotFromRemoteClient(client)
+    }
+
+    private fun updateSnapshotFromRemoteClient(client: RemoteMediaClient?) {
+        val status = client?.mediaStatus
+        val playerState = status?.playerState
+        val isConnected = client != null
+        sessionSnapshotState.value = CastSessionSnapshot(
+            isConnected = isConnected,
+            isPlaying = playerState == MediaStatus.PLAYER_STATE_PLAYING,
+            isBuffering = playerState == MediaStatus.PLAYER_STATE_BUFFERING,
+            durationMs = status?.mediaInfo?.streamDuration?.coerceAtLeast(0L) ?: 0L,
+            positionMs = client?.approximateStreamPosition?.coerceAtLeast(0L) ?: 0L,
+        )
     }
 }
 

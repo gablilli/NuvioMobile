@@ -296,6 +296,7 @@ private fun PlayerLaunch.toExternalPlayerPlaybackRequest(): ExternalPlayerPlayba
         sourceUrl = sourceUrl,
         title = title,
         streamTitle = streamTitle,
+        artworkUrl = episodeThumbnail ?: poster ?: background ?: logo,
         sourceHeaders = sourceHeaders,
     )
 

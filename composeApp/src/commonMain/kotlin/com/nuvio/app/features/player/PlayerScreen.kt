@@ -145,6 +145,7 @@ fun PlayerScreen(
 ) {
     LockPlayerToLandscape()
     val castLauncher = rememberCastLauncher()
+    val castSessionSnapshot = rememberCastSessionSnapshot()
     val playerSettingsUiState by remember {
         PlayerSettingsRepository.ensureLoaded()
         PlayerSettingsRepository.uiState
@@ -212,8 +213,19 @@ fun PlayerScreen(
         var playerController by remember { mutableStateOf<PlayerEngineController?>(null) }
         var playerControllerSourceUrl by remember { mutableStateOf<String?>(null) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
+        val effectivePlaybackSnapshot = if (castSessionSnapshot.isConnected) {
+            playbackSnapshot.copy(
+                isPlaying = castSessionSnapshot.isPlaying,
+                isLoading = castSessionSnapshot.isBuffering,
+                durationMs = castSessionSnapshot.durationMs.takeIf { it > 0L } ?: playbackSnapshot.durationMs,
+                positionMs = castSessionSnapshot.positionMs,
+                bufferedPositionMs = castSessionSnapshot.positionMs,
+            )
+        } else {
+            playbackSnapshot
+        }
         val keepScreenAwake = errorMessage == null &&
-            (playbackSnapshot.isPlaying || (shouldPlay && playbackSnapshot.isLoading))
+            (effectivePlaybackSnapshot.isPlaying || (shouldPlay && effectivePlaybackSnapshot.isLoading))
         EnterImmersivePlayerMode(keepScreenAwake = keepScreenAwake)
         var scrubbingPositionMs by remember { mutableStateOf<Long?>(null) }
         var pausedOverlayVisible by remember { mutableStateOf(false) }
@@ -248,9 +260,17 @@ fun PlayerScreen(
             activeEpisodeNumber,
         ) { mutableStateOf(false) }
         val backdropArtwork = background ?: poster
-        val displayedPositionMs = scrubbingPositionMs ?: playbackSnapshot.positionMs
+        val displayedPositionMs = scrubbingPositionMs ?: effectivePlaybackSnapshot.positionMs
         val isEpisode = activeSeasonNumber != null && activeEpisodeNumber != null
         val currentGestureFeedback = liveGestureFeedback ?: gestureFeedback
+
+        LaunchedEffect(castSessionSnapshot.isConnected) {
+            if (castSessionSnapshot.isConnected) {
+                shouldPlay = false
+                playerController?.pause()
+                controlsVisible = true
+            }
+        }
 
         LaunchedEffect(currentGestureFeedback) {
             if (currentGestureFeedback != null) {
@@ -653,11 +673,18 @@ fun PlayerScreen(
         }
 
         fun togglePlayback() {
-            if (playbackSnapshot.isPlaying) {
+            if (castSessionSnapshot.isConnected) {
+                shouldPlay = false
+                playerController?.pause()
+                toggleCastPlayback()
+                controlsVisible = true
+                return
+            }
+            if (effectivePlaybackSnapshot.isPlaying) {
                 shouldPlay = false
                 playerController?.pause()
             } else {
-                if (playbackSnapshot.isEnded) {
+                if (effectivePlaybackSnapshot.isEnded) {
                     playerController?.seekTo(0L)
                 }
                 shouldPlay = true
@@ -667,6 +694,15 @@ fun PlayerScreen(
         }
 
         fun seekBy(offsetMs: Long) {
+            if (castSessionSnapshot.isConnected) {
+                seekCastBy(offsetMs)
+                controlsVisible = true
+                when {
+                    offsetMs > 0L -> showSeekFeedback(PlayerSeekDirection.Forward, offsetMs)
+                    offsetMs < 0L -> showSeekFeedback(PlayerSeekDirection.Backward, abs(offsetMs))
+                }
+                return
+            }
             playerController?.seekBy(offsetMs)
             controlsVisible = true
             when {
@@ -676,7 +712,7 @@ fun PlayerScreen(
         }
 
         fun handleDoubleTapSeek(direction: PlayerSeekDirection) {
-            val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+            val currentPositionMs = effectivePlaybackSnapshot.positionMs.coerceAtLeast(0L)
             val nextState = if (accumulatedSeekState?.direction == direction) {
                 accumulatedSeekState!!.copy(amountMs = accumulatedSeekState!!.amountMs + PlayerDoubleTapSeekStepMs)
             } else {
@@ -688,7 +724,7 @@ fun PlayerScreen(
             }
             accumulatedSeekState = nextState
 
-            val maxDurationMs = playbackSnapshot.durationMs.takeIf { it > 0L }
+            val maxDurationMs = effectivePlaybackSnapshot.durationMs.takeIf { it > 0L }
             val targetPositionMs = when (direction) {
                 PlayerSeekDirection.Backward -> {
                     (nextState.baselinePositionMs - nextState.amountMs).coerceAtLeast(0L)
@@ -699,7 +735,11 @@ fun PlayerScreen(
                     maxDurationMs?.let { unclamped.coerceAtMost(it) } ?: unclamped
                 }
             }
-            playerController?.seekTo(targetPositionMs)
+            if (castSessionSnapshot.isConnected) {
+                seekCastTo(targetPositionMs)
+            } else {
+                playerController?.seekTo(targetPositionMs)
+            }
             showSeekFeedback(direction, nextState.amountMs)
 
             accumulatedSeekResetJob?.cancel()
@@ -798,16 +838,20 @@ fun PlayerScreen(
         val revealLockedOverlayState = rememberUpdatedState(::revealLockedOverlay)
         val isHoldToSpeedGestureActiveState = rememberUpdatedState(isHoldToSpeedGestureActive)
         val playerControlsLockedState = rememberUpdatedState(playerControlsLocked)
-        val currentPositionMsState = rememberUpdatedState(playbackSnapshot.positionMs.coerceAtLeast(0L))
-        val currentDurationMsState = rememberUpdatedState(playbackSnapshot.durationMs)
+        val currentPositionMsState = rememberUpdatedState(effectivePlaybackSnapshot.positionMs.coerceAtLeast(0L))
+        val currentDurationMsState = rememberUpdatedState(effectivePlaybackSnapshot.durationMs)
         val commitHorizontalSeekState = rememberUpdatedState { targetPositionMs: Long ->
-            playerController?.seekTo(targetPositionMs)
+            if (castSessionSnapshot.isConnected) {
+                seekCastTo(targetPositionMs)
+            } else {
+                playerController?.seekTo(targetPositionMs)
+            }
         }
 
         fun switchToSource(stream: StreamItem) {
             val url = stream.directPlaybackUrl ?: return
             if (url == activeSourceUrl) return
-            val currentPositionMs = playbackSnapshot.positionMs.coerceAtLeast(0L)
+            val currentPositionMs = effectivePlaybackSnapshot.positionMs.coerceAtLeast(0L)
             flushWatchProgress()
             if (playerSettingsUiState.streamReuseLastLinkEnabled && activeVideoId != null) {
                 val cacheKey = StreamLinkCacheRepository.contentKey(
@@ -1115,6 +1159,7 @@ fun PlayerScreen(
             sourceUrl = activeSourceUrl,
             title = title,
             streamTitle = activeStreamTitle,
+            artworkUrl = activeEpisodeThumbnail ?: poster ?: background ?: logo,
             sourceHeaders = activeSourceHeaders,
         )
 
@@ -1132,9 +1177,24 @@ fun PlayerScreen(
             {
                 prepareCastPlaybackRequest(currentCastPlaybackRequest())
                 castLauncher.invoke()
+                shouldPlay = false
+                playerController?.pause()
             }
         } else {
             ::handleCastRequest
+        }
+
+        LaunchedEffect(
+            castSessionSnapshot.isConnected,
+            activeSourceUrl,
+            activeSourceHeaders,
+            activeStreamTitle,
+            activeEpisodeThumbnail,
+        ) {
+            if (!castSessionSnapshot.isConnected) return@LaunchedEffect
+            shouldPlay = false
+            playerController?.pause()
+            syncCastPlaybackRequestIfConnected(currentCastPlaybackRequest())
         }
 
         fun fetchAddonSubtitlesForActiveItem() {
@@ -1180,19 +1240,21 @@ fun PlayerScreen(
             fetchAddonSubtitlesForActiveItem()
         }
 
-        LaunchedEffect(playbackSnapshot.isLoading, playerController) {
-            if (!playbackSnapshot.isLoading && playerController != null) {
+        LaunchedEffect(effectivePlaybackSnapshot.isLoading, playerController, castSessionSnapshot.isConnected) {
+            if (castSessionSnapshot.isConnected) return@LaunchedEffect
+            if (!effectivePlaybackSnapshot.isLoading && playerController != null) {
                 refreshTracks()
             }
         }
 
         LaunchedEffect(
             playerController,
-            playbackSnapshot.isLoading,
+            effectivePlaybackSnapshot.isLoading,
             preferredAudioSelectionApplied,
             preferredSubtitleSelectionApplied,
         ) {
-            if (playerController == null || playbackSnapshot.isLoading) {
+            if (castSessionSnapshot.isConnected) return@LaunchedEffect
+            if (playerController == null || effectivePlaybackSnapshot.isLoading) {
                 return@LaunchedEffect
             }
             if (preferredAudioSelectionApplied && preferredSubtitleSelectionApplied) {
@@ -1211,17 +1273,18 @@ fun PlayerScreen(
         LaunchedEffect(
             playerController,
             playerControllerSourceUrl,
-            playbackSnapshot.isLoading,
-            playbackSnapshot.durationMs,
+            effectivePlaybackSnapshot.isLoading,
+            effectivePlaybackSnapshot.durationMs,
             activeInitialPositionMs,
             activeInitialProgressFraction,
             initialSeekApplied,
         ) {
+            if (castSessionSnapshot.isConnected) return@LaunchedEffect
             val controller = playerController ?: return@LaunchedEffect
             if (playerControllerSourceUrl != activeSourceUrl) {
                 return@LaunchedEffect
             }
-            if (initialSeekApplied || playbackSnapshot.isLoading) {
+            if (initialSeekApplied || effectivePlaybackSnapshot.isLoading) {
                 return@LaunchedEffect
             }
 
@@ -1230,8 +1293,8 @@ fun PlayerScreen(
                 ?.coerceIn(0f, 1f)
             val targetPositionMs = when {
                 activeInitialPositionMs > 0L -> activeInitialPositionMs
-                progressFraction != null && playbackSnapshot.durationMs > 0L -> {
-                    (playbackSnapshot.durationMs.toDouble() * progressFraction.toDouble()).toLong()
+                progressFraction != null && effectivePlaybackSnapshot.durationMs > 0L -> {
+                    (effectivePlaybackSnapshot.durationMs.toDouble() * progressFraction.toDouble()).toLong()
                 }
                 progressFraction != null -> return@LaunchedEffect
                 else -> 0L
@@ -1603,7 +1666,7 @@ fun PlayerScreen(
                     if (!snapshot.isLoading) {
                         initialLoadCompleted = true
                     }
-                    if (snapshot.isEnded) {
+                    if (snapshot.isEnded && !castSessionSnapshot.isConnected) {
                         shouldPlay = false
                         controlsVisible = !playerControlsLocked
                     }
@@ -1659,7 +1722,7 @@ fun PlayerScreen(
                     seasonNumber = activeSeasonNumber,
                     episodeNumber = activeEpisodeNumber,
                     episodeTitle = activeEpisodeTitle,
-                    playbackSnapshot = playbackSnapshot,
+                    playbackSnapshot = effectivePlaybackSnapshot,
                     displayedPositionMs = displayedPositionMs,
                     metrics = metrics,
                     resizeMode = resizeMode,
@@ -1692,7 +1755,11 @@ fun PlayerScreen(
                     onScrubChange = { positionMs -> scrubbingPositionMs = positionMs },
                     onScrubFinished = { positionMs ->
                         scrubbingPositionMs = null
-                        playerController?.seekTo(positionMs)
+                        if (castSessionSnapshot.isConnected) {
+                            seekCastTo(positionMs)
+                        } else {
+                            playerController?.seekTo(positionMs)
+                        }
                     },
                     horizontalSafePadding = horizontalSafePadding,
                     modifier = Modifier.fillMaxSize(),

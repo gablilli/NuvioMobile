@@ -1,4 +1,4 @@
-name: Build APK
+name: Build mobile artifacts
 on:
   push:
     branches: [ "main" ]
@@ -60,3 +60,69 @@ jobs:
         with:
           name: apk-${{ github.run_number }}
           path: composeApp/build/outputs/apk/**/*.apk
+
+  ios_ipa:
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            iosApp/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('iosApp/Podfile.lock', 'iosApp/Podfile') }}
+          restore-keys: |
+            pods-${{ runner.os }}-
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd iosApp
+          pod install --repo-update
+
+      - name: Build iOS archive
+        run: |
+          cd iosApp
+          xcodebuild \
+            -workspace iosApp.xcworkspace \
+            -scheme iosApp \
+            -configuration Release \
+            -destination generic/platform=iOS \
+            -archivePath "$RUNNER_TEMP/iosApp.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/iosApp.xcarchive/Products/Applications/iosApp.app"
+          mkdir -p "$RUNNER_TEMP/ios-ipa/Payload"
+          cp -R "$APP_PATH" "$RUNNER_TEMP/ios-ipa/Payload/"
+          cd "$RUNNER_TEMP/ios-ipa"
+          zip -r "iosApp-unsigned-${{ github.run_number }}.ipa" Payload
+
+      - name: Upload iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-${{ github.run_number }}
+          path: ${{ runner.temp }}/ios-ipa/*.ipa
