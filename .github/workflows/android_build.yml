@@ -1,5 +1,4 @@
 name: Build APK
-
 on:
   push:
     branches: [ "main" ]
@@ -11,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,6 +19,26 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Cache Android SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/build-tools
+            ${{ env.ANDROID_SDK_ROOT }}/platforms
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/libs.versions.toml') }}
+          restore-keys: |
+            android-sdk-${{ runner.os }}-
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -36,7 +54,7 @@ jobs:
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
-      
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
