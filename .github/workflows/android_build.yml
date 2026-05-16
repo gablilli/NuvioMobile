@@ -21,13 +21,13 @@ jobs:
           key: mpvkit-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
           restore-keys: |
             mpvkit-${{ runner.os }}-
-            
+
       - name: Checkout MPVKit submodule
         uses: actions/checkout@v4
         with:
           repository: tapframe/MPVNuvio
           path: MPVKit
-          depth: 1
+          fetch-depth: 1
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -45,16 +45,6 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
-      - name: Cache Android SDK components
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ANDROID_SDK_ROOT }}/build-tools
-            ${{ env.ANDROID_SDK_ROOT }}/platforms
-          key: android-sdk-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/libs.versions.toml') }}
-          restore-keys: |
-            android-sdk-${{ runner.os }}-
-
       - name: Cache Kotlin Native
         uses: actions/cache@v4
         with:
@@ -68,11 +58,21 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Cache Android SDK components
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_HOME }}/build-tools
+            ${{ env.ANDROID_HOME }}/platforms
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('**/build.gradle*', '**/libs.versions.toml') }}
+          restore-keys: |
+            android-sdk-${{ runner.os }}-
+
       - name: Grant execute permission
         run: chmod +x ./gradlew
 
       - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
 
       - name: Fix Kotlin Native warnings and enable build cache
         run: |
@@ -80,7 +80,8 @@ jobs:
           echo "org.gradle.caching=true" >> gradle.properties
           echo "org.gradle.parallel=true" >> gradle.properties
           echo "org.gradle.daemon=false" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx6g -XX:+UseParallelGC" >> gradle.properties
+          echo "kotlin.native.jvmArgs=-Xmx6g" >> gradle.properties
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --build-cache --stacktrace
@@ -108,7 +109,11 @@ jobs:
             mpvkit-${{ runner.os }}-
 
       - name: Checkout MPVKit submodule
-        run: git submodule update --init --depth 1 MPVKit
+        uses: actions/checkout@v4
+        with:
+          repository: tapframe/MPVNuvio
+          path: MPVKit
+          fetch-depth: 1
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -155,7 +160,8 @@ jobs:
           echo "org.gradle.caching=true" >> gradle.properties
           echo "org.gradle.parallel=true" >> gradle.properties
           echo "org.gradle.daemon=false" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4g -XX:+UseParallelGC" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx6g -XX:+UseParallelGC" >> gradle.properties
+          echo "kotlin.native.jvmArgs=-Xmx6g" >> gradle.properties
 
       - name: Install CocoaPods dependencies
         run: |
