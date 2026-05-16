@@ -54,7 +54,9 @@ jobs:
       - name: Cache Kotlin Native
         uses: actions/cache@v4
         with:
-          path: ~/.konan
+          path: |
+            ~/.konan
+            ~/.konan/dependencies
           key: konan-${{ runner.os }}-${{ hashFiles('**/libs.versions.toml') }}
           restore-keys: |
             konan-${{ runner.os }}-
@@ -123,7 +125,9 @@ jobs:
       - name: Cache Kotlin Native
         uses: actions/cache@v4
         with:
-          path: ~/.konan
+          path: |
+            ~/.konan
+            ~/.konan/dependencies
           key: konan-${{ runner.os }}-${{ hashFiles('**/libs.versions.toml') }}
           restore-keys: |
             konan-${{ runner.os }}-
@@ -137,6 +141,9 @@ jobs:
           key: pods-${{ runner.os }}-${{ hashFiles('iosApp/Podfile.lock', 'iosApp/Podfile') }}
           restore-keys: |
             pods-${{ runner.os }}-
+
+      - name: Create local.properties
+        run: touch local.properties
 
       - name: Fix Kotlin Native warnings and enable build cache
         run: |
