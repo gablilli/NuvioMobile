@@ -21,11 +21,13 @@ jobs:
           key: mpvkit-${{ runner.os }}-${{ hashFiles('.gitmodules') }}
           restore-keys: |
             mpvkit-${{ runner.os }}-
-
+            
       - name: Checkout MPVKit submodule
-        run: |
-          rm -rf MPVKit
-          git submodule update --init --depth 1 MPVKit
+        uses: actions/checkout@v4
+        with:
+          repository: tapframe/MPVNuvio
+          path: MPVKit
+          depth: 1
 
       - name: Setup Java
         uses: actions/setup-java@v4
