@@ -23,7 +23,9 @@ jobs:
             mpvkit-${{ runner.os }}-
 
       - name: Checkout MPVKit submodule
-        run: git submodule update --init --depth 1 MPVKit
+        run: |
+          rm -rf MPVKit
+          git submodule update --init --depth 1 MPVKit
 
       - name: Setup Java
         uses: actions/setup-java@v4
