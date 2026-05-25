@@ -5,18 +5,33 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.mediarouter.app.MediaRouteChooserDialog
+import androidx.mediarouter.media.MediaRouteSelector
+import com.google.android.gms.cast.MediaInfo
+import com.google.android.gms.cast.MediaLoadRequestData
+import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaStatus
+import com.google.android.gms.common.images.WebImage
+import com.google.android.gms.cast.framework.CastContext
+import com.google.android.gms.cast.framework.CastSession
+import com.google.android.gms.cast.framework.media.RemoteMediaClient
+import com.google.android.gms.cast.framework.SessionManagerListener
 import kotlin.math.roundToInt
 
 @Composable
@@ -180,4 +195,254 @@ private class AndroidPlayerGestureController(
         }.getOrDefault(127)
             .coerceIn(1, 255)
             .toFloat() / 255f
+}
+
+@Composable
+actual fun rememberCastLauncher(): (() -> Unit)? {
+    val activity = LocalContext.current.findActivity() as? AppCompatActivity ?: return null
+    return remember(activity) {
+        {
+            AndroidCastPlaybackCoordinator.openChooser(activity)
+        }
+    }
+}
+
+actual fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest) {
+    AndroidCastPlaybackCoordinator.updatePendingRequest(request)
+}
+
+@Composable
+actual fun rememberCastSessionSnapshot(): CastSessionSnapshot {
+    val snapshot by AndroidCastPlaybackCoordinator.sessionSnapshotState
+    return snapshot
+}
+
+actual fun syncCastPlaybackRequestIfConnected(request: ExternalPlayerPlaybackRequest) {
+    AndroidCastPlaybackCoordinator.syncIfConnected(request)
+}
+
+actual fun toggleCastPlayback() {
+    AndroidCastPlaybackCoordinator.togglePlayback()
+}
+
+actual fun seekCastBy(offsetMs: Long) {
+    AndroidCastPlaybackCoordinator.seekBy(offsetMs)
+}
+
+actual fun seekCastTo(positionMs: Long) {
+    AndroidCastPlaybackCoordinator.seekTo(positionMs)
+}
+
+private object AndroidCastPlaybackCoordinator {
+    private val stateLock = Any()
+    private var pendingRequest: ExternalPlayerPlaybackRequest? = null
+    private var sessionListenerRegistered = false
+    private var listenerCastContext: CastContext? = null
+    val sessionSnapshotState = mutableStateOf(CastSessionSnapshot())
+    private var attachedRemoteClient: RemoteMediaClient? = null
+
+    private val remoteClientCallback = object : RemoteMediaClient.Callback() {
+        override fun onStatusUpdated() {
+            updateSnapshotFromRemoteClient(attachedRemoteClient)
+        }
+
+        override fun onMetadataUpdated() {
+            updateSnapshotFromRemoteClient(attachedRemoteClient)
+        }
+    }
+
+    private val sessionListener = object : SessionManagerListener<CastSession> {
+        override fun onSessionStarting(session: CastSession) = Unit
+
+        override fun onSessionStarted(session: CastSession, sessionId: String) {
+            attachRemoteClient(session.remoteMediaClient)
+            loadPendingRequest(session)
+            updateSnapshotFromRemoteClient(session.remoteMediaClient)
+        }
+
+        override fun onSessionStartFailed(session: CastSession, error: Int) {
+            unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
+        }
+
+        override fun onSessionEnding(session: CastSession) = Unit
+
+        override fun onSessionEnded(session: CastSession, error: Int) {
+            attachRemoteClient(null)
+            unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
+        }
+
+        override fun onSessionResuming(session: CastSession, sessionId: String) = Unit
+
+        override fun onSessionResumed(session: CastSession, wasSuspended: Boolean) {
+            attachRemoteClient(session.remoteMediaClient)
+            loadPendingRequest(session)
+            updateSnapshotFromRemoteClient(session.remoteMediaClient)
+        }
+
+        override fun onSessionResumeFailed(session: CastSession, error: Int) {
+            unregisterSessionListenerIfIdle()
+            updateSnapshotFromRemoteClient(null)
+        }
+
+        override fun onSessionSuspended(session: CastSession, reason: Int) = Unit
+    }
+
+    fun updatePendingRequest(request: ExternalPlayerPlaybackRequest) {
+        synchronized(stateLock) {
+            pendingRequest = request
+        }
+    }
+
+    fun syncIfConnected(request: ExternalPlayerPlaybackRequest) {
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val currentSession = castContext.sessionManager.currentCastSession ?: return
+        updatePendingRequest(request)
+        loadPendingRequest(currentSession)
+    }
+
+    fun togglePlayback() {
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        val playerState = remoteClient.mediaStatus?.playerState
+        if (playerState == MediaStatus.PLAYER_STATE_PLAYING || playerState == MediaStatus.PLAYER_STATE_BUFFERING) {
+            remoteClient.pause()
+        } else {
+            remoteClient.play()
+        }
+    }
+
+    fun seekBy(offsetMs: Long) {
+        if (offsetMs == 0L) return
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        val currentPosition = remoteClient.approximateStreamPosition.coerceAtLeast(0L)
+        val duration = remoteClient.mediaStatus?.mediaInfo?.streamDuration?.takeIf { it > 0L }
+        val target = (currentPosition + offsetMs).let { unclamped ->
+            duration?.let { unclamped.coerceIn(0L, it) } ?: unclamped.coerceAtLeast(0L)
+        }
+        remoteClient.seek(target)
+    }
+
+    fun seekTo(positionMs: Long) {
+        val target = positionMs.coerceAtLeast(0L)
+        val castContext = synchronized(stateLock) { listenerCastContext } ?: return
+        val remoteClient = castContext.sessionManager.currentCastSession?.remoteMediaClient ?: return
+        remoteClient.seek(target)
+    }
+
+    fun openChooser(activity: AppCompatActivity) {
+        runCatching { CastContext.getSharedInstance(activity) }
+            .getOrNull()
+            ?.let { castContext ->
+                ensureSessionListener(castContext)
+                MediaRouteChooserDialog(activity).apply {
+                    routeSelector = castContext.mergedSelector ?: MediaRouteSelector.EMPTY
+                }.show()
+            }
+    }
+
+    private fun ensureSessionListener(castContext: CastContext) {
+        synchronized(stateLock) {
+            if (sessionListenerRegistered) return
+            castContext.sessionManager.addSessionManagerListener(
+                sessionListener,
+                CastSession::class.java,
+            )
+            sessionListenerRegistered = true
+            listenerCastContext = castContext
+        }
+    }
+
+    private fun unregisterSessionListenerIfIdle() {
+        val castContextToUnregister = synchronized(stateLock) {
+            if (pendingRequest != null || !sessionListenerRegistered) {
+                null
+            } else {
+                val castContext = listenerCastContext
+                listenerCastContext = null
+                sessionListenerRegistered = false
+                castContext
+            }
+        }
+        castContextToUnregister?.sessionManager?.removeSessionManagerListener(
+            sessionListener,
+            CastSession::class.java,
+        )
+    }
+
+    private fun loadPendingRequest(session: CastSession) {
+        val remoteMediaClient = session.remoteMediaClient ?: return
+        attachRemoteClient(remoteMediaClient)
+        val request = synchronized(stateLock) {
+            pendingRequest?.also {
+                pendingRequest = null
+            }
+        } ?: return
+        val displayTitle = request.streamTitle?.takeIf { it.isNotBlank() } ?: request.title
+        val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_GENERIC).apply {
+            putString(MediaMetadata.KEY_TITLE, displayTitle)
+            putString(MediaMetadata.KEY_SUBTITLE, request.title)
+            request.artworkUrl
+                ?.takeIf { it.isNotBlank() }
+                ?.let { addImage(WebImage(Uri.parse(it))) }
+        }
+        val mediaInfo = MediaInfo.Builder(request.sourceUrl)
+            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setContentType(request.castContentType())
+            .setMetadata(metadata)
+            .build()
+        remoteMediaClient.load(
+            MediaLoadRequestData.Builder()
+                .setMediaInfo(mediaInfo)
+                .setAutoplay(true)
+                .build(),
+        )
+        unregisterSessionListenerIfIdle()
+        updateSnapshotFromRemoteClient(remoteMediaClient)
+    }
+
+    private fun attachRemoteClient(client: RemoteMediaClient?) {
+        val previous = attachedRemoteClient
+        if (previous === client) return
+        previous?.unregisterCallback(remoteClientCallback)
+        attachedRemoteClient = client
+        client?.registerCallback(remoteClientCallback)
+        updateSnapshotFromRemoteClient(client)
+    }
+
+    private fun updateSnapshotFromRemoteClient(client: RemoteMediaClient?) {
+        val status = client?.mediaStatus
+        val playerState = status?.playerState
+        val isConnected = client != null
+        sessionSnapshotState.value = CastSessionSnapshot(
+            isConnected = isConnected,
+            isPlaying = playerState == MediaStatus.PLAYER_STATE_PLAYING,
+            isBuffering = playerState == MediaStatus.PLAYER_STATE_BUFFERING,
+            durationMs = status?.mediaInfo?.streamDuration?.coerceAtLeast(0L) ?: 0L,
+            positionMs = client?.approximateStreamPosition?.coerceAtLeast(0L) ?: 0L,
+        )
+    }
+}
+
+private fun ExternalPlayerPlaybackRequest.castContentType(): String {
+    val headerType = sourceHeaders.entries.firstNotNullOfOrNull { (key, value) ->
+        value.takeIf { key.equals("Content-Type", ignoreCase = true) }
+    }?.substringBefore(';')?.trim()
+    if (!headerType.isNullOrBlank()) return headerType
+    return sourceUrl.castContentTypeFromUrl()
+}
+
+private fun String.castContentTypeFromUrl(): String {
+    val normalized = substringBefore('?').substringBefore('#').lowercase()
+    return when {
+        normalized.endsWith(".m3u8") -> "application/x-mpegURL"
+        normalized.endsWith(".mpd") -> "application/dash+xml"
+        normalized.endsWith(".mkv") -> "video/x-matroska"
+        normalized.endsWith(".webm") -> "video/webm"
+        normalized.endsWith(".avi") -> "video/x-msvideo"
+        normalized.endsWith(".mov") -> "video/quicktime"
+        else -> "video/*"
+    }
 }

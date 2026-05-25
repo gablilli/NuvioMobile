@@ -15,6 +15,14 @@ data class PlayerAudioLevel(
     val isMuted: Boolean,
 )
 
+data class CastSessionSnapshot(
+    val isConnected: Boolean = false,
+    val isPlaying: Boolean = false,
+    val isBuffering: Boolean = false,
+    val durationMs: Long = 0L,
+    val positionMs: Long = 0L,
+)
+
 @Composable
 expect fun LockPlayerToLandscape()
 
@@ -29,3 +37,19 @@ expect fun ManagePlayerPictureInPicture(
 
 @Composable
 expect fun rememberPlayerGestureController(): PlayerGestureController?
+
+@Composable
+expect fun rememberCastLauncher(): (() -> Unit)?
+
+expect fun prepareCastPlaybackRequest(request: ExternalPlayerPlaybackRequest)
+
+@Composable
+expect fun rememberCastSessionSnapshot(): CastSessionSnapshot
+
+expect fun syncCastPlaybackRequestIfConnected(request: ExternalPlayerPlaybackRequest)
+
+expect fun toggleCastPlayback()
+
+expect fun seekCastBy(offsetMs: Long)
+
+expect fun seekCastTo(positionMs: Long)
